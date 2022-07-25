@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Websocket Demo Client</title>
+    <script type="text/javascript" src="js/socket_demo.js"></script>
+</head>
+<body>
+    <button onclick="contactServer()">Say Hello to the Server</button>
+    <div>
+        <h3 id="UserIDHeader">User ID: </h3>
+        <button onclick="sendMessage('Get New UUID')">Get New ID</button>
+    </div>
+    <div>
+        <h3> Username: </h3>
+        <input type="text" id="UsernameSearchField" value="Enter your Destiny ID">
+        <button onclick="searchUsername()">Search Username</button>
+        <button onclick="setUsername()">Set Username</button>
+    </div>
+</body>
+
+</html>
