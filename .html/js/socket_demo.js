@@ -1,6 +1,7 @@
 const socket = new WebSocket('ws://localhost:80');
 let seperator = "::";
 let uuid;
+let lobby_id = "";
 
 function get_cookie(cname) {
 
@@ -26,10 +27,11 @@ function get_cookie(cname) {
 socket.addEventListener('open', function(event) {
     socket.send("Connection Established");
     uuid = get_cookie('uuid');
-    console.log(uuid);
-    if (uuid == null) {
+
+    if (uuid == null || uuid === 'undefined') {
         sendMessage("Get New UUID")
     }
+    console.log(uuid);
     document.getElementById("UserIDHeader").innerHTML = uuid;
 });
 
@@ -55,10 +57,21 @@ socket.addEventListener('message', function(event) {
             let d = new Date();
             // Sets expiry to one week
             d.setTime(d.getTime() + 604800000);
-            document.cookie = "uuid=" + uuid + ";expires=" + d.toUTCString();
+            document.cookie = "uuid=" + uuid + ";expires=" + d.toUTCString() +";SameSite=None";
             break;
         case ("Player Data"):
             console.log(message[1]);
+            break;
+        case ("Game Data"):
+            if (message.length > 1){
+                window.alert(message[1]);
+            }
+            break;
+        case ("Lobby"):
+            if (message.length > 1){
+                lobby_id = message[1]
+                document.getElementById("LobbyIDField").innerHTML = message[1];
+            }
             break;
     }
 });
@@ -69,6 +82,10 @@ const contactServer = () => {
 
 const sendMessage = (message) => {
     socket.send(message);
+}
+
+const sendMessageWithUUID = (message) => {
+    socket.send(message + seperator + uuid);
 }
 
 const searchUsername = () => {

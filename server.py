@@ -3,6 +3,8 @@ import asyncio
 import uuid
 import PlayerDB
 import DestinyAPI
+from Player import Player
+from Lobby import Lobby
 
 from LobbyNameGen import LobbyNameGen
 
@@ -51,9 +53,30 @@ async def create_lobby_names():
     global active_players
     while True:
         for player in active_players.keys():
-            await active_players[player].send(lobby_generator.get_new_lobby_id())
+            await active_players[player].socket.send(lobby_generator.get_new_lobby_id())
         await asyncio.sleep(15)
 
+
+def matchmake(_uuid):
+    global lobby_generator
+    print(active_players.keys().__contains__(_uuid))
+    if active_players.keys().__contains__(_uuid):
+        player = active_players[_uuid]
+        if player.lobby_id == "None":
+            for lobbyKey in active_lobbies.keys():
+                lobby = active_lobbies[lobbyKey]
+                if len(lobby.players) < 2:
+                    lobby.players.add(_uuid)
+                    player.lobby_id = lobby.lobby_id
+                    return lobby.lobby_id
+            new_lobby = Lobby(lobby_generator)
+            new_lobby.players.add(_uuid)
+            active_lobbies[new_lobby.lobby_id] = new_lobby
+            player.lobby_id = new_lobby.lobby_id
+            return new_lobby.lobby_id
+        else:
+            return player.lobby_id
+    return "ERROR"
 
 # Primary handler of socket events
 async def handler(websocket, path):
@@ -88,8 +111,14 @@ async def handler(websocket, path):
             # Searches for a player by their full Bungie ID, has some more aggressive handling to avoid a situation where
                 # a player's ID includes the seperator text.
             elif data_segments[0] == "uuid" and len(data_segments) > 1:
-                active_players[data_segments[1]] = websocket
-            # EDIT: Nevermind, appologies to anyone with a username that includes the seperator...
+                if not check_valid_uuid(data_segments[1]):
+                    header = "UUID"
+                    reply = str(uuid.uuid4())
+                    active_players[reply] = Player(websocket, reply)
+                else:
+                    active_players[data_segments[1]] = Player(websocket, data_segments[1])
+                    print(active_players)
+            # EDIT: Nevermind, apologies to anyone with a username that includes the seperator...
             elif len(data_segments) > 1 and data_segments[0] == "Player Search":
                 header = "Player Data"
                 # name = data[13 + len(seperator):]
@@ -98,7 +127,21 @@ async def handler(websocket, path):
             elif data_segments[0] == "Set Username" and len(data_segments) >= 3:
                 if check_valid_uuid(data_segments[2]):
                     db.set_player_data(data_segments[2], str(search_player_by_name(data_segments[1])))
-
+            elif data_segments[0] == "Matchmake" and len(data_segments) > 1:
+                if check_valid_uuid(data_segments[1]):
+                    lobby_id = matchmake(data_segments[1])
+                    header = "Lobby"
+                    reply = lobby_id
+            elif data_segments[0] == "Get Game Data" and len(data_segments) > 1:
+                if check_valid_uuid(data_segments[1]):
+                    player = active_players[data_segments[1]]
+                    if player is not None and player.lobby_id != "None":
+                        lobby = active_lobbies[player.lobby_id]
+                        if lobby is not None:
+                            header = "GameData"
+                            reply = "Players=" + str(lobby.players) + "; Lobby ID=" + lobby.lobby_id
+                    else:
+                        reply = "ERROR"
             else:
                 reply = "Unknown Socket Data"
             # else:
@@ -148,9 +191,8 @@ if __name__ == "__main__":
 
         loop = asyncio.get_event_loop()
         loop.create_task(clear_old_data())
-        loop.create_task(create_lobby_names())
+        # loop.create_task(create_lobby_names())
         loop.run_until_complete(start_server)
-        # asyncio.gather(start_server, clear_old_data())
         asyncio.get_event_loop().run_forever()
         # async with websockets.serve(echo, "localhost", 80):
         #     await asyncio.Future()
