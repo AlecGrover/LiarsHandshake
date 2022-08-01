@@ -1,3 +1,5 @@
+import json
+
 import websockets
 import asyncio
 import uuid
@@ -41,9 +43,37 @@ def assign_data_to_uuid(_uuid, data):
     db.set_player_data(_uuid, data)
 
 
+# Attempts to fetch any player stats from the database for the provided UUID
+def get_stats_from_uuid(_uuid):
+    # Reject query if the UUID is improperly formatted
+    if not check_valid_uuid(_uuid):
+        print("Attempted to check stats for an invalid UUID.")
+        return None
+    raw_data = search_player_by_id(_uuid)
+    # Reject query if the UUID does not have stored data or is not in the database
+    if raw_data is None:
+        print("Attempted to fetch stats for a UUID with no data.")
+        return None
+    data = eval(raw_data)
+    membership_id = data["membershipId"]
+    membership_type = data["membershipType"]
+    # Reject query if the user has an API entry but no Destiny stats
+    if membership_id is None or membership_type is None:
+        print("Missing required membership information in API data for UUID.")
+        return None
+    player = active_players[_uuid]
+    # Reject query if the player is not in the active_players list
+    if player is None:
+        print("No player with provided UUID in active_players.")
+        return None
+    # Acquires updated stats for the player from the API and returns
+    stats = player.get_updated_stats(membership_id, membership_type)
+    return stats
+
+
 # Queries the Database for an extant user with the specified UUID
 def search_player_by_id(_id):
-    player_data = db.get_player_data(id)
+    player_data = db.get_player_data(_id)
     return player_data
 
 
@@ -57,18 +87,23 @@ async def create_lobby_names():
         await asyncio.sleep(15)
 
 
+# Matchmakes a player with the specified UUID
 def matchmake(_uuid):
     global lobby_generator
     print(active_players.keys().__contains__(_uuid))
+    # Attempts to locate the player in the active player list
     if active_players.keys().__contains__(_uuid):
         player = active_players[_uuid]
+        # If the player does not have a lobby id, matchmake them
         if player.lobby_id == "None":
+            # Search the active lobbies for a lobby with space, if found, add the player to that lobby and return the id
             for lobbyKey in active_lobbies.keys():
                 lobby = active_lobbies[lobbyKey]
                 if len(lobby.players) < 2:
                     lobby.players.add(_uuid)
                     player.lobby_id = lobby.lobby_id
                     return lobby.lobby_id
+            # If there is no lobby with space, create a new one, place the player into it, and return the lobby id
             new_lobby = Lobby(lobby_generator)
             new_lobby.players.add(_uuid)
             active_lobbies[new_lobby.lobby_id] = new_lobby
@@ -77,6 +112,7 @@ def matchmake(_uuid):
         else:
             return player.lobby_id
     return "ERROR"
+
 
 # Primary handler of socket events
 async def handler(websocket, path):
@@ -111,45 +147,70 @@ async def handler(websocket, path):
             # Searches for a player by their full Bungie ID, has some more aggressive handling to avoid a situation where
                 # a player's ID includes the seperator text.
             elif data_segments[0] == "uuid" and len(data_segments) > 1:
-                if not check_valid_uuid(data_segments[1]):
-                    header = "UUID"
-                    reply = str(uuid.uuid4())
-                    active_players[reply] = Player(websocket, reply)
-                else:
-                    active_players[data_segments[1]] = Player(websocket, data_segments[1])
-                    print(active_players)
+                header, reply = await register_uuid_connection(active_players, data_segments, header, reply, websocket)
             # EDIT: Nevermind, apologies to anyone with a username that includes the seperator...
             elif len(data_segments) > 1 and data_segments[0] == "Player Search":
                 header = "Player Data"
-                # name = data[13 + len(seperator):]
-                # reply = str(search_player_by_name(name))
                 reply = str(search_player_by_name(data_segments[1]))
+            # Locks in an entered username and registers the account data to the UUID in the database
             elif data_segments[0] == "Set Username" and len(data_segments) >= 3:
-                if check_valid_uuid(data_segments[2]):
-                    db.set_player_data(data_segments[2], str(search_player_by_name(data_segments[1])))
+                await set_username_to_db(data_segments, db)
+            # Calls the matchmaker
             elif data_segments[0] == "Matchmake" and len(data_segments) > 1:
                 if check_valid_uuid(data_segments[1]):
                     lobby_id = matchmake(data_segments[1])
                     header = "Lobby"
                     reply = lobby_id
+            # Requests details on the player's current lobby if one exists
             elif data_segments[0] == "Get Game Data" and len(data_segments) > 1:
+                header, reply = await get_lobby_data(active_players, data_segments, header, reply)
+            # Returns the player's stats
+            elif data_segments[0] == "Get My Stats" and len(data_segments) > 1:
                 if check_valid_uuid(data_segments[1]):
-                    player = active_players[data_segments[1]]
-                    if player is not None and player.lobby_id != "None":
-                        lobby = active_lobbies[player.lobby_id]
-                        if lobby is not None:
-                            header = "GameData"
-                            reply = "Players=" + str(lobby.players) + "; Lobby ID=" + lobby.lobby_id
-                    else:
-                        reply = "ERROR"
+                    header = "STATS"
+                    reply = json.dumps(get_stats_from_uuid(data_segments[1]))
             else:
                 reply = "Unknown Socket Data"
             # else:
             #     reply = f"Data received as {type(data)} {data}!"
             await websocket.send(header + seperator + reply)
+        # Disconnects the user
         except websockets.ConnectionClosedOK as e:
             print("User disconnected.")
             break
+
+
+# Asynchronous function for acquiring lobby data
+async def get_lobby_data(active_players, data_segments, header, reply):
+    if check_valid_uuid(data_segments[1]):
+        player = active_players[data_segments[1]]
+        if player is not None and player.lobby_id != "None":
+            lobby = active_lobbies[player.lobby_id]
+            if lobby is not None:
+                header = "GameData"
+                reply = "Players=" + str(lobby.players) + "; Lobby ID=" + lobby.lobby_id
+        else:
+            reply = "ERROR"
+    return header, reply
+
+
+# Inserts player data to the database keyed to their UUID
+# TODO: Refactor to make the name more accurately descriptive
+async def set_username_to_db(data_segments, db):
+    if check_valid_uuid(data_segments[2]):
+        db.set_player_data(data_segments[2], str(search_player_by_name(data_segments[1])))
+
+
+# Creates an active player object registered to a UUID
+async def register_uuid_connection(active_players, data_segments, header, reply, websocket):
+    if not check_valid_uuid(data_segments[1]):
+        header = "UUID"
+        reply = str(uuid.uuid4())
+        active_players[reply] = Player(websocket, reply)
+    else:
+        active_players[data_segments[1]] = Player(websocket, data_segments[1])
+        print(active_players)
+    return header, reply
 
 
 # Disused development function

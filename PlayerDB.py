@@ -32,7 +32,7 @@ class PlayerDB:
         self.cursor.execute(_sql, (_uuid, ))
         data = self.cursor.fetchall()
         if len(data) > 0:
-            return data[0]
+            return data[0][0]
         else:
             return None
 

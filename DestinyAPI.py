@@ -13,3 +13,10 @@ def search_for_user(user):
     with requests.get(url, stream=True, headers=HEADERS) as r:
         data = r.json()
         return data["Response"]
+
+
+def get_user_stats(membership_id, membership_type):
+    url = BUNGIE + PLATFORM + f"Destiny2/{membership_type}/Account/{membership_id}/Character/0/Stats/"
+    with requests.get(url, stream=True, headers=HEADERS) as r:
+        data = r.json()
+        return data["Response"]
